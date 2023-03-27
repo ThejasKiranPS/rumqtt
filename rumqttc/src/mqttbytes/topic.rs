@@ -1,19 +1,39 @@
+#[derive(Debug)]
+pub enum InvalidTopicError {
+    EmptyTopic,
+    ContainsNull,
+    ContainsWildCards,
+    TooLong,
+}
+
 /// Checks if a topic or topic filter has wildcards
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('+') || s.contains('#')
 }
-
 /// Checks if a topic is valid
-pub fn valid_topic(topic: &str) -> bool {
+pub fn valid_topic(topic: &str) -> Result<(), InvalidTopicError> {
+    use InvalidTopicError::*;
     if topic.contains('+') {
-        return false;
+        return Err(ContainsWildCards);
     }
 
     if topic.contains('#') {
-        return false;
+        return Err(ContainsWildCards);
     }
 
-    true
+    if topic.is_empty() {
+        return Err(EmptyTopic);
+    }
+
+    if topic.contains("\0") {
+        return Err(ContainsNull);
+    }
+
+    if topic.len() > 65535 {
+        return Err(TooLong);
+    }
+
+    Ok(())
 }
 
 /// Checks if the filter is valid
@@ -103,10 +123,34 @@ mod test {
 
     #[test]
     fn topics_are_validated_correctly() {
-        assert!(!super::valid_topic("+wrong"));
-        assert!(!super::valid_topic("wro#ng"));
-        assert!(!super::valid_topic("w/r/o/n/g+"));
-        assert!(!super::valid_topic("wrong/#/path"));
+        use super::valid_topic;
+        use super::InvalidTopicError::*;
+
+        assert!(matches!(valid_topic("+wrong"), Err(ContainsWildCards)));
+        assert!(matches!(valid_topic("wro#ng"), Err(ContainsWildCards)));
+        assert!(matches!(valid_topic("w/r/o/n/g+"), Err(ContainsWildCards)));
+        assert!(matches!(
+            valid_topic("wrong/#/path"),
+            Err(ContainsWildCards)
+        ));
+
+        // All Topic Names and Topic Filters MUST be at least one character long
+        assert!(matches!(valid_topic(""), Err(EmptyTopic)));
+        assert!(matches!(valid_topic("_"), Ok(())));
+
+        // Topic Names and Topic Filters MUST NOT include the null character (Unicode U+0000)
+        assert!(matches!(
+            valid_topic("string_with_null\0"),
+            Err(ContainsNull)
+        ));
+        assert!(matches!(valid_topic("string_with_no_null\\0"), Ok(())));
+
+        // Topic Names and Topic Filters are UTF-8 encoded strings,
+        // they MUST NOT encode to more than 65535 bytes
+        let invalid_topic = String::from_utf8(vec![97; 65535 + 1]).unwrap();
+        assert!(matches!(super::valid_topic(&invalid_topic), Err(TooLong)));
+        let valid_topic = String::from_utf8(vec![97; 65535]).unwrap();
+        assert!(matches!(super::valid_topic(&valid_topic), Ok(())));
     }
 
     #[test]

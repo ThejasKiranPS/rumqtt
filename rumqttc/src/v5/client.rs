@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::mqttbytes::{Filter, PubAck, PubRec, Publish, QoS, Subscribe, Unsubscribe};
 use super::{ConnectionError, Event, EventLoop, MqttOptions, Request};
-use crate::valid_topic;
+use crate::{valid_topic, InvalidTopicError};
 
 use bytes::Bytes;
 use flume::{SendError, Sender, TrySendError};
@@ -19,8 +19,15 @@ pub enum ClientError {
     Request(Request),
     #[error("Failed to send mqtt requests to eventloop")]
     TryRequest(Request),
+    #[error("Invalid Topic")]
+    InvalidTopic(InvalidTopicError),
 }
 
+impl From<InvalidTopicError> for ClientError {
+    fn from(err: InvalidTopicError) -> ClientError {
+        ClientError::InvalidTopic(err)
+    }
+}
 impl From<SendError<Request>> for ClientError {
     fn from(e: SendError<Request>) -> Self {
         Self::Request(e.into_inner())
@@ -77,12 +84,10 @@ impl AsyncClient {
         P: Into<Bytes>,
     {
         let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::new(&topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
-        if !valid_topic(&topic) {
-            return Err(ClientError::Request(publish));
-        }
         self.request_tx.send_async(publish).await?;
         Ok(())
     }
@@ -100,12 +105,10 @@ impl AsyncClient {
         P: Into<Bytes>,
     {
         let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::new(&topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
-        if !valid_topic(&topic) {
-            return Err(ClientError::TryRequest(publish));
-        }
         self.request_tx.try_send(publish)?;
         Ok(())
     }
@@ -141,12 +144,10 @@ impl AsyncClient {
         S: Into<String>,
     {
         let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::new(&topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
-        if !valid_topic(&topic) {
-            return Err(ClientError::TryRequest(publish));
-        }
         self.request_tx.send_async(publish).await?;
         Ok(())
     }

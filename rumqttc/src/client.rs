@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use crate::mqttbytes::{v4::*, QoS};
-use crate::{valid_topic, ConnectionError, Event, EventLoop, MqttOptions, Request};
+use crate::{
+    valid_topic, ConnectionError, Event, EventLoop, InvalidTopicError, MqttOptions, Request,
+};
 
 use bytes::Bytes;
 use flume::{SendError, Sender, TrySendError};
@@ -18,6 +20,14 @@ pub enum ClientError {
     Request(Request),
     #[error("Failed to send mqtt requests to eventloop")]
     TryRequest(Request),
+    #[error("Invalid Topic")]
+    InvalidTopic(InvalidTopicError),
+}
+
+impl From<InvalidTopicError> for ClientError {
+    fn from(err: InvalidTopicError) -> ClientError {
+        ClientError::InvalidTopic(err)
+    }
 }
 
 impl From<SendError<Request>> for ClientError {
@@ -76,12 +86,10 @@ impl AsyncClient {
         V: Into<Vec<u8>>,
     {
         let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::new(&topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
-        if !valid_topic(&topic) {
-            return Err(ClientError::Request(publish));
-        }
         self.request_tx.send_async(publish).await?;
         Ok(())
     }
@@ -99,12 +107,10 @@ impl AsyncClient {
         V: Into<Vec<u8>>,
     {
         let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::new(&topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
-        if !valid_topic(&topic) {
-            return Err(ClientError::TryRequest(publish));
-        }
         self.request_tx.try_send(publish)?;
         Ok(())
     }
@@ -139,6 +145,8 @@ impl AsyncClient {
     where
         S: Into<String>,
     {
+        let topic = topic.into();
+        valid_topic(&topic)?;
         let mut publish = Publish::from_bytes(topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);

@@ -39,7 +39,7 @@ fn publish(client: Client) {
         let topic = format!("hello/{i}/world");
         let qos = QoS::AtLeastOnce;
 
-        let _ = client.publish(topic, qos, true, payload);
+        let _ = client.publish(topic, qos, true, payload).unwrap();
     }
 
     thread::sleep(Duration::from_secs(1));

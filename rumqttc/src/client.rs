@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::mqttbytes::{v4::*, QoS};
 use crate::{
-    valid_topic, ConnectionError, Event, EventLoop, InvalidTopicError, MqttOptions, Request,
+    valid_filter, valid_topic, ConnectionError, Event, EventLoop, InvalidFilterError,
+    InvalidTopicError, MqttOptions, Request,
 };
 
 use bytes::Bytes;
@@ -22,11 +23,18 @@ pub enum ClientError {
     TryRequest(Request),
     #[error("Invalid Topic")]
     InvalidTopic(InvalidTopicError),
+    #[error("Invalid Filter")]
+    InvalidFilter(InvalidFilterError),
 }
 
 impl From<InvalidTopicError> for ClientError {
     fn from(err: InvalidTopicError) -> ClientError {
         ClientError::InvalidTopic(err)
+    }
+}
+impl From<InvalidFilterError> for ClientError {
+    fn from(err: InvalidFilterError) -> ClientError {
+        ClientError::InvalidFilter(err)
     }
 }
 
@@ -87,7 +95,7 @@ impl AsyncClient {
     {
         let topic = topic.into();
         valid_topic(&topic)?;
-        let mut publish = Publish::new(&topic, qos, payload);
+        let mut publish = Publish::new(topic, qos, payload);
         publish.retain = retain;
         let publish = Request::Publish(publish);
         self.request_tx.send_async(publish).await?;
@@ -156,7 +164,9 @@ impl AsyncClient {
 
     /// Sends a MQTT Subscribe to the `EventLoop`
     pub async fn subscribe<S: Into<String>>(&self, topic: S, qos: QoS) -> Result<(), ClientError> {
-        let subscribe = Subscribe::new(topic.into(), qos);
+        let topic = topic.into();
+        valid_filter(&topic)?;
+        let subscribe = Subscribe::new(topic, qos);
         let request = Request::Subscribe(subscribe);
         self.request_tx.send_async(request).await?;
         Ok(())
@@ -164,7 +174,9 @@ impl AsyncClient {
 
     /// Attempts to send a MQTT Subscribe to the `EventLoop`
     pub fn try_subscribe<S: Into<String>>(&self, topic: S, qos: QoS) -> Result<(), ClientError> {
-        let subscribe = Subscribe::new(topic.into(), qos);
+        let topic = topic.into();
+        valid_filter(&topic)?;
+        let subscribe = Subscribe::new(topic, qos);
         let request = Request::Subscribe(subscribe);
         self.request_tx.try_send(request)?;
         Ok(())
@@ -173,8 +185,11 @@ impl AsyncClient {
     /// Sends a MQTT Subscribe for multiple topics to the `EventLoop`
     pub async fn subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = SubscribeFilter>,
+        T: IntoIterator<Item = SubscribeFilter> + Clone,
     {
+        for topic in topics.clone() {
+            valid_filter(&topic.path)?;
+        }
         let subscribe = Subscribe::new_many(topics);
         let request = Request::Subscribe(subscribe);
         self.request_tx.send_async(request).await?;
@@ -184,14 +199,18 @@ impl AsyncClient {
     /// Attempts to send a MQTT Subscribe for multiple topics to the `EventLoop`
     pub fn try_subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = SubscribeFilter>,
+        T: IntoIterator<Item = SubscribeFilter> + Clone,
     {
+        for topic in topics.clone() {
+            valid_filter(&topic.path)?;
+        }
         let subscribe = Subscribe::new_many(topics);
         let request = Request::Subscribe(subscribe);
         self.request_tx.try_send(request)?;
         Ok(())
     }
 
+    // TODO: add topic validation for unsubscribe functions
     /// Sends a MQTT Unsubscribe to the `EventLoop`
     pub async fn unsubscribe<S: Into<String>>(&self, topic: S) -> Result<(), ClientError> {
         let unsubscribe = Unsubscribe::new(topic.into());
@@ -325,14 +344,14 @@ impl Client {
     /// Sends a MQTT Subscribe for multiple topics to the `EventLoop`
     pub fn subscribe_many<T>(&mut self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = SubscribeFilter>,
+        T: IntoIterator<Item = SubscribeFilter> + Clone,
     {
         pollster::block_on(self.client.subscribe_many(topics))
     }
 
     pub fn try_subscribe_many<T>(&mut self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = SubscribeFilter>,
+        T: IntoIterator<Item = SubscribeFilter> + Clone,
     {
         self.client.try_subscribe_many(topics)
     }

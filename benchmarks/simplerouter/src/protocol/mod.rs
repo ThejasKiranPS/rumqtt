@@ -6,12 +6,30 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 pub mod v4;
 pub mod v5;
 
+#[derive(Debug)]
+pub enum InvalidFilterError {
+    EmptyTopic,
+    ContainsNull,
+    TooLong,
+    WildCardsShouldOccupyEntireLevel,
+    MultiLevelNotAtEnd,
+}
 /// Checks if the filter is valid
 ///
 /// <https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718106>
-pub fn valid_filter(filter: &str) -> bool {
+pub fn valid_filter(filter: &str) -> Result<(), InvalidFilterError> {
+    use InvalidFilterError::*;
+
     if filter.is_empty() {
-        return false;
+        return Err(EmptyTopic);
+    }
+
+    if filter.contains("\0") {
+        return Err(ContainsNull);
+    }
+
+    if filter.len() > 65535 {
+        return Err(TooLong);
     }
 
     let hirerarchy = filter.split('/').collect::<Vec<&str>>();
@@ -21,13 +39,13 @@ pub fn valid_filter(filter: &str) -> bool {
             // invalid: sport/tennis#/player
             // invalid: sport/tennis/#/ranking
             if entry.contains('#') {
-                return false;
+                return Err(MultiLevelNotAtEnd);
             }
 
             // + must occupy an entire level of the filter
             // invalid: sport+
             if entry.len() > 1 && entry.contains('+') {
-                return false;
+                return Err(WildCardsShouldOccupyEntireLevel);
             }
         }
 
@@ -35,10 +53,11 @@ pub fn valid_filter(filter: &str) -> bool {
         // invalid: sport/tennis#
         // invalid: sport/++
         if last.len() != 1 && (last.contains('#') || last.contains('+')) {
-            return false;
+            return Err(WildCardsShouldOccupyEntireLevel);
         }
     }
-    true
+
+    Ok(())
 }
 
 /// MQTT packet type

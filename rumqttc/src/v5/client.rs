@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::mqttbytes::{Filter, PubAck, PubRec, Publish, QoS, Subscribe, Unsubscribe};
 use super::{ConnectionError, Event, EventLoop, MqttOptions, Request};
-use crate::{valid_topic, InvalidTopicError};
+use crate::{valid_filter, valid_topic, InvalidFilterError, InvalidTopicError};
 
 use bytes::Bytes;
 use flume::{SendError, Sender, TrySendError};
@@ -21,11 +21,18 @@ pub enum ClientError {
     TryRequest(Request),
     #[error("Invalid Topic")]
     InvalidTopic(InvalidTopicError),
+    #[error("Invalid Filter")]
+    InvalidFilter(InvalidFilterError),
 }
 
 impl From<InvalidTopicError> for ClientError {
     fn from(err: InvalidTopicError) -> ClientError {
         ClientError::InvalidTopic(err)
+    }
+}
+impl From<InvalidFilterError> for ClientError {
+    fn from(err: InvalidFilterError) -> ClientError {
+        ClientError::InvalidFilter(err)
     }
 }
 impl From<SendError<Request>> for ClientError {
@@ -154,6 +161,8 @@ impl AsyncClient {
 
     /// Sends a MQTT Subscribe to the `EventLoop`
     pub async fn subscribe<S: Into<String>>(&self, topic: S, qos: QoS) -> Result<(), ClientError> {
+        let topic = topic.into();
+        valid_filter(&topic)?;
         let filter = Filter::new(topic, qos);
         let subscribe = Subscribe::new(filter);
         let request = Request::Subscribe(subscribe);
@@ -163,6 +172,8 @@ impl AsyncClient {
 
     /// Attempts to send a MQTT Subscribe to the `EventLoop`
     pub fn try_subscribe<S: Into<String>>(&self, topic: S, qos: QoS) -> Result<(), ClientError> {
+        let topic = topic.into();
+        valid_filter(&topic)?;
         let filter = Filter::new(topic, qos);
         let subscribe = Subscribe::new(filter);
         let request = Request::Subscribe(subscribe);
@@ -173,8 +184,11 @@ impl AsyncClient {
     /// Sends a MQTT Subscribe for multiple topics to the `EventLoop`
     pub async fn subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = Filter>,
+        T: IntoIterator<Item = Filter> + Clone,
     {
+        for filter in topics.clone() {
+            valid_filter(&filter.path)?;
+        }
         let subscribe = Subscribe::new_many(topics);
         let request = Request::Subscribe(subscribe);
         self.request_tx.send_async(request).await?;
@@ -184,8 +198,11 @@ impl AsyncClient {
     /// Attempts to send a MQTT Subscribe for multiple topics to the `EventLoop`
     pub fn try_subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = Filter>,
+        T: IntoIterator<Item = Filter> + Clone,
     {
+        for filter in topics.clone() {
+            valid_filter(&filter.path)?;
+        }
         let subscribe = Subscribe::new_many(topics);
         let request = Request::Subscribe(subscribe);
         self.request_tx.try_send(request)?;
@@ -321,14 +338,14 @@ impl Client {
     /// Sends a MQTT Subscribe for multiple topics to the `EventLoop`
     pub fn subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = Filter>,
+        T: IntoIterator<Item = Filter> + Clone,
     {
         pollster::block_on(self.client.subscribe_many(topics))
     }
 
     pub fn try_subscribe_many<T>(&self, topics: T) -> Result<(), ClientError>
     where
-        T: IntoIterator<Item = Filter>,
+        T: IntoIterator<Item = Filter> + Clone,
     {
         self.client.try_subscribe_many(topics)
     }

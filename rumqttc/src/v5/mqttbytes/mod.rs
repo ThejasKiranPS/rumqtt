@@ -644,26 +644,63 @@ pub fn qos(num: u8) -> Option<QoS> {
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('+') || s.contains('#')
 }
+#[derive(Debug)]
+pub enum InvalidTopicError {
+    EmptyTopic,
+    ContainsNull,
+    ContainsWildCards,
+    TooLong,
+}
 
+#[derive(Debug)]
+pub enum InvalidFilterError {
+    EmptyTopic,
+    ContainsNull,
+    TooLong,
+    WildCardsShouldOccupyEntireLevel,
+    MultiLevelNotAtEnd,
+}
 /// Checks if a topic is valid
-pub fn valid_topic(topic: &str) -> bool {
+pub fn valid_topic(topic: &str) -> Result<(), InvalidTopicError> {
+    use InvalidTopicError::*;
     if topic.contains('+') {
-        return false;
+        return Err(ContainsWildCards);
     }
 
     if topic.contains('#') {
-        return false;
+        return Err(ContainsWildCards);
     }
 
-    true
-}
+    if topic.is_empty() {
+        return Err(EmptyTopic);
+    }
 
+    if topic.contains("\0") {
+        return Err(ContainsNull);
+    }
+
+    if topic.len() > 65535 {
+        return Err(TooLong);
+    }
+
+    Ok(())
+}
 /// Checks if the filter is valid
 ///
 /// <https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718106>
-pub fn valid_filter(filter: &str) -> bool {
+pub fn valid_filter(filter: &str) -> Result<(), InvalidFilterError> {
+    use InvalidFilterError::*;
+
     if filter.is_empty() {
-        return false;
+        return Err(EmptyTopic);
+    }
+
+    if filter.contains("\0") {
+        return Err(ContainsNull);
+    }
+
+    if filter.len() > 65535 {
+        return Err(TooLong);
     }
 
     let hirerarchy = filter.split('/').collect::<Vec<&str>>();
@@ -673,13 +710,13 @@ pub fn valid_filter(filter: &str) -> bool {
             // invalid: sport/tennis#/player
             // invalid: sport/tennis/#/ranking
             if entry.contains('#') {
-                return false;
+                return Err(MultiLevelNotAtEnd);
             }
 
             // + must occupy an entire level of the filter
             // invalid: sport+
             if entry.len() > 1 && entry.contains('+') {
-                return false;
+                return Err(WildCardsShouldOccupyEntireLevel);
             }
         }
 
@@ -687,10 +724,11 @@ pub fn valid_filter(filter: &str) -> bool {
         // invalid: sport/tennis#
         // invalid: sport/++
         if last.len() != 1 && (last.contains('#') || last.contains('+')) {
-            return false;
+            return Err(WildCardsShouldOccupyEntireLevel);
         }
     }
-    true
+
+    Ok(())
 }
 
 /// Checks if topic matches a filter. topic and filter validation isn't done here.

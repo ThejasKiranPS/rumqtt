@@ -6,6 +6,15 @@ pub enum InvalidTopicError {
     TooLong,
 }
 
+#[derive(Debug)]
+pub enum InvalidFilterError {
+    EmptyTopic,
+    ContainsNull,
+    TooLong,
+    WildCardsShouldOccupyEntireLevel,
+    MultiLevelNotAtEnd,
+}
+
 /// Checks if a topic or topic filter has wildcards
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('+') || s.contains('#')
@@ -39,9 +48,19 @@ pub fn valid_topic(topic: &str) -> Result<(), InvalidTopicError> {
 /// Checks if the filter is valid
 ///
 /// <https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718106>
-pub fn valid_filter(filter: &str) -> bool {
+pub fn valid_filter(filter: &str) -> Result<(), InvalidFilterError> {
+    use InvalidFilterError::*;
+
     if filter.is_empty() {
-        return false;
+        return Err(EmptyTopic);
+    }
+
+    if filter.contains("\0") {
+        return Err(ContainsNull);
+    }
+
+    if filter.len() > 65535 {
+        return Err(TooLong);
     }
 
     let hirerarchy = filter.split('/').collect::<Vec<&str>>();
@@ -51,13 +70,13 @@ pub fn valid_filter(filter: &str) -> bool {
             // invalid: sport/tennis#/player
             // invalid: sport/tennis/#/ranking
             if entry.contains('#') {
-                return false;
+                return Err(MultiLevelNotAtEnd);
             }
 
             // + must occupy an entire level of the filter
             // invalid: sport+
             if entry.len() > 1 && entry.contains('+') {
-                return false;
+                return Err(WildCardsShouldOccupyEntireLevel);
             }
         }
 
@@ -65,11 +84,11 @@ pub fn valid_filter(filter: &str) -> bool {
         // invalid: sport/tennis#
         // invalid: sport/++
         if last.len() != 1 && (last.contains('#') || last.contains('+')) {
-            return false;
+            return Err(WildCardsShouldOccupyEntireLevel);
         }
     }
 
-    true
+    Ok(())
 }
 
 /// Checks if topic matches a filter. topic and filter validation isn't done here.
@@ -114,6 +133,8 @@ pub fn matches(topic: &str, filter: &str) -> bool {
 
 #[cfg(test)]
 mod test {
+    use crate::InvalidFilterError;
+
     #[test]
     fn wildcards_are_detected_correctly() {
         assert!(!super::has_wildcards("a/b/c"));
@@ -155,19 +176,44 @@ mod test {
 
     #[test]
     fn filters_are_validated_correctly() {
-        assert!(!super::valid_filter("wrong/#/filter"));
-        assert!(!super::valid_filter("wrong/wr#ng/filter"));
-        assert!(!super::valid_filter("wrong/filter#"));
-        assert!(super::valid_filter("correct/filter/#"));
-        assert!(!super::valid_filter("wr/o+/ng"));
-        assert!(!super::valid_filter("wr/+o+/ng"));
-        assert!(!super::valid_filter("wron/+g"));
-        assert!(super::valid_filter("cor/+/rect/+"));
+        use super::valid_filter;
+        use super::InvalidFilterError::*;
+
+        assert!(matches!(
+            valid_filter("wrong/#/filter"),
+            Err(MultiLevelNotAtEnd)
+        ));
+        assert!(matches!(
+            valid_filter("wrong/wr#ng/filter"),
+            Err(MultiLevelNotAtEnd)
+        ));
+        assert!(matches!(
+            valid_filter("wrong/filter#"),
+            Err(WildCardsShouldOccupyEntireLevel)
+        ));
+        assert!(matches!(valid_filter("correct/filter/#"), Ok(())));
+        assert!(matches!(
+            valid_filter("wr/o+/ng"),
+            Err(WildCardsShouldOccupyEntireLevel)
+        ));
+        assert!(matches!(
+            valid_filter("wr/+o+/ng"),
+            Err(WildCardsShouldOccupyEntireLevel)
+        ));
+        assert!(matches!(
+            valid_filter("wron/+g"),
+            Err(WildCardsShouldOccupyEntireLevel)
+        ));
+        assert!(matches!(valid_filter("cor/+/rect/+"), Ok(())));
+        assert!(matches!(valid_filter("#"), Ok(())))
     }
 
     #[test]
     fn zero_len_subscriptions_are_not_allowed() {
-        assert!(!super::valid_filter(""));
+        assert!(matches!(
+            super::valid_filter(""),
+            Err(InvalidFilterError::EmptyTopic)
+        ));
     }
 
     #[test]

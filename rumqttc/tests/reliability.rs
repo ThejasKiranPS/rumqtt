@@ -12,7 +12,7 @@ async fn start_requests(count: u8, qos: QoS, delay: u64, client: AsyncClient) {
         let topic = "hello/world".to_owned();
         let payload = vec![i, 1, 2, 3];
 
-        let _ = client.publish(topic, qos, false, payload).await;
+        let _ = client.publish(topic, qos, false, payload).await.unwrap();
         time::sleep(Duration::from_secs(delay)).await;
     }
 }
@@ -28,7 +28,7 @@ async fn start_requests_with_payload(
         let topic = "hello/world".to_owned();
         let payload = vec![i; payload];
 
-        let _ = client.publish(topic, qos, false, payload).await;
+        let _ = client.publish(topic, qos, false, payload).await.unwrap();
         time::sleep(Duration::from_secs(delay)).await;
     }
 }
